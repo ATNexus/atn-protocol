@@ -1,0 +1,36 @@
+推送ATN Protocol到GitHub的三种方法:
+
+方法1: 使用GitHub Desktop (最简单)
+1. 安装GitHub Desktop: https://desktop.github.com
+2. 添加本地仓库: File > Add local repository
+3. 选择: /Users/yu/.openclaw/workspace
+4. 点击 Publish repository
+
+方法2: 使用命令行 (需要token)
+1. 生成Personal Access Token:
+   https://github.com/settings/tokens
+   勾选: repo, workflow
+
+2. 执行推送:
+   cd /Users/yu/.openclaw/workspace
+   git remote set-url origin https://TOKEN@github.com/YOUR_USERNAME/atn-protocol.git
+   git push -u origin main
+
+方法3: 使用SSH
+1. 生成SSH密钥:
+   ssh-keygen -t ed25519 -C "your@email.com"
+   cat ~/.ssh/id_ed25519.pub
+
+2. 添加到GitHub:
+   https://github.com/settings/keys
+
+3. 推送:
+   git remote set-url origin git@github.com:YOUR_USERNAME/atn-protocol.git
+   git push -u origin main
+
+推荐: 方法1 (GitHub Desktop) 最简单
+
+推送后:
+- 访问: https://github.com/YOUR_USERNAME/atn-protocol
+- 查看Actions: https://github.com/YOUR_USERNAME/atn-protocol/actions
+- 配置Secrets: Settings > Secrets > SOLANA_WALLET
