@@ -1,0 +1,25 @@
+# ATN Protocol Python 服务 Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装依赖
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制代码
+COPY ATN_Core/ /app/ATN_Core/
+COPY ATN_Protocol/ /app/ATN_Protocol/
+
+# 安装Python依赖
+RUN pip install --no-cache-dir \
+    pytest \
+    flask \
+    requests
+
+# 暴露端口
+EXPOSE 8000
+
+# 启动命令
+CMD ["python3", "-m", "http.server", "8000"]

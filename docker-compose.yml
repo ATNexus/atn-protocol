@@ -1,0 +1,70 @@
+# ATN Protocol Docker 配置
+# 用于快速部署和开发环境
+
+version: '3.8'
+
+services:
+  # Solana 本地节点 (用于开发测试)
+  solana-local:
+    image: solanalabs/solana:v1.17.0
+    container_name: atn-solana-local
+    ports:
+      - "8899:8899"  # RPC
+      - "8900:8900"  # WebSocket
+    command: solana-test-validator
+    volumes:
+      - solana-data:/root/.local/share/solana
+    networks:
+      - atn-network
+
+  # ATN Python 服务
+  atn-python:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: atn-python
+    volumes:
+      - ./ATN_Core:/app/ATN_Core
+      - ./ATN_Protocol:/app/ATN_Protocol
+    working_dir: /app
+    command: python3 -m http.server 8000
+    ports:
+      - "8000:8000"
+    networks:
+      - atn-network
+    depends_on:
+      - solana-local
+
+  # ATN 前端
+  atn-frontend:
+    build:
+      context: ./ATN_Marketplace_UI
+      dockerfile: Dockerfile
+    container_name: atn-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SOLANA_RPC=http://solana-local:8899
+    networks:
+      - atn-network
+    depends_on:
+      - solana-local
+
+  # 数据库 (用于存储临时数据)
+  redis:
+    image: redis:7-alpine
+    container_name: atn-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - atn-network
+
+volumes:
+  solana-data:
+  redis-data:
+
+networks:
+  atn-network:
+    driver: bridge
