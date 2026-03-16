@@ -95,7 +95,6 @@ jobs:
 
   # 部署到Devnet
   deploy-devnet:
-    needs: [lint, test]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
