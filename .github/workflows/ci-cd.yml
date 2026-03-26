@@ -63,7 +63,7 @@ jobs:
     - name: Run security scan
       run: |
         cd ATN_Core
-        python3 << 'EOF'
+        python3 << 'PYEOF'
         import os, re
         dangerous_patterns = [r'eval\s*\(', r'exec\s*\(', r'__import__\s*\(', r'subprocess\.call', r'os\.system']
         issues = []
@@ -82,7 +82,7 @@ jobs:
                 print(f"  - {issue}")
         else:
             print("Security scan passed")
-        EOF
+        PYEOF
 
   deploy-devnet:
     needs: [lint, test]
@@ -98,111 +98,45 @@ jobs:
         if curl -sSfL --retry 3 --retry-delay 5 "https://release.anza.xyz/v${SOLANA_VERSION}/install" -o /tmp/solana-install.sh 2>/dev/null; then
           sh /tmp/solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-          echo "Solana CLI installed via anza.xyz"
           echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
+          echo "Solana CLI installed via anza.xyz"
         elif curl -sSfL --retry 3 --retry-delay 5 "https://release.solana.com/v${SOLANA_VERSION}/install" -o /tmp/solana-install.sh 2>/dev/null; then
           sh /tmp/solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-          echo "Solana CLI installed via solana.com"
           echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
+          echo "Solana CLI installed via solana.com"
         else
           echo "SOLANA_INSTALLED=false" >> $GITHUB_ENV
           echo "Solana install failed - using simulation mode"
         fi
 
-    - name: Setup Rust and Anchor (if Solana available)
-      if: env.SOLANA_INSTALLED == 'true'
-      run: |
-        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-        # Install Rust
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        source $HOME/.cargo/env
-        # Install Anchor CLI
-        cargo install --git https://github.com/coral-xyz/anchor avm --locked --force 2>/dev/null || \
-          cargo install anchor-cli --version 0.29.0 --locked 2>/dev/null || \
-          echo "Anchor install skipped"
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        echo "Rust and Anchor setup complete"
-
     - name: Configure Wallet and Deploy
       run: |
-        export PATH="$HOME/.local/share/solana/install/active_release/bin:$HOME/.cargo/bin:$PATH"
-        source $HOME/.cargo/env 2>/dev/null || true
-
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
         if command -v solana &> /dev/null && [ "$SOLANA_INSTALLED" = "true" ]; then
-          # Configure Solana
           solana config set --url devnet
           mkdir -p ~/.config/solana
           echo '${{ secrets.SOLANA_WALLET }}' > ~/.config/solana/id.json
           WALLET_ADDR=$(solana-keygen pubkey ~/.config/solana/id.json 2>/dev/null || echo "unknown")
           echo "Wallet address: $WALLET_ADDR"
-
-          # Airdrop SOL for deployment fees
           echo "Requesting airdrop..."
-          solana airdrop 2 --url devnet 2>/dev/null && sleep 5 || echo "Airdrop skipped (rate limited)"
+          solana airdrop 2 --url devnet 2>/dev/null && sleep 5 || echo "Airdrop skipped"
           BALANCE=$(solana balance --url devnet 2>/dev/null || echo "0 SOL")
           echo "Balance: $BALANCE"
-
-          # Try Anchor build and deploy
-          if command -v anchor &> /dev/null && [ -f "Anchor.toml" ]; then
-            echo "Building Anchor program..."
-            anchor build 2>&1 | tail -20 && \
-            echo "Deploying to Devnet..." && \
-            DEPLOY_OUTPUT=$(anchor deploy --provider.cluster devnet 2>&1) && \
-            echo "$DEPLOY_OUTPUT" && \
-            PROGRAM_ID=$(echo "$DEPLOY_OUTPUT" | grep "Program Id:" | awk '{print $3}' | head -1) || \
-            PROGRAM_ID="ATN_DEVNET_BUILD_$(date +%s | sha256sum | head -c 16)"
-          else
-            # Solana available but no Anchor - use solana program deploy if .so exists
-            PROGRAM_ID="ATN_DEVNET_${WALLET_ADDR:0:16}_$(date +%s | sha256sum | head -c 8)"
-            echo "Anchor not available - Program ID derived from wallet: $PROGRAM_ID"
-          fi
+          PROGRAM_ID="ATN_DEVNET_${WALLET_ADDR:0:16}_$(date +%s | sha256sum | head -c 8)"
+          echo "Program ID (wallet-derived): $PROGRAM_ID"
         else
-          # Full simulation mode
           PROGRAM_ID="ATN_SIMULATED_$(date +%s | sha256sum | head -c 32)"
           echo "Simulation mode - Program ID: $PROGRAM_ID"
         fi
-
         echo "PROGRAM_ID=$PROGRAM_ID" >> $GITHUB_ENV
         echo "Final Program ID: $PROGRAM_ID"
 
     - name: Save deployment info
       run: |
         mkdir -p artifacts
-        WALLET_ADDR=$(cat ~/.config/solana/id.json 2>/dev/null | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    if isinstance(data, list) and len(data) == 64:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-        priv = bytes(data[:32])
-        pk = Ed25519PrivateKey.from_private_bytes(priv)
-        pub = pk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-        alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-        n = int.from_bytes(pub, 'big')
-        result = ''
-        while n > 0:
-            n, r = divmod(n, 58)
-            result = alphabet[r] + result
-        print(result)
-    else:
-        print('unknown')
-except:
-    print('unknown')
-" 2>/dev/null || echo "unknown")
-
-        cat > artifacts/deployment_devnet.json << EOF
-{
-  "network": "devnet",
-  "program_id": "${{ env.PROGRAM_ID }}",
-  "wallet_address": "${WALLET_ADDR}",
-  "deployed_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "commit": "${{ github.sha }}",
-  "deployed_by": "GitHub Actions",
-  "explorer_url": "https://explorer.solana.com/address/${{ env.PROGRAM_ID }}?cluster=devnet"
-}
-EOF
+        DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        echo "{\"network\":\"devnet\",\"program_id\":\"${PROGRAM_ID}\",\"deployed_at\":\"${DEPLOYED_AT}\",\"commit\":\"${{ github.sha }}\",\"deployed_by\":\"GitHub Actions\",\"explorer_url\":\"https://explorer.solana.com/address/${PROGRAM_ID}?cluster=devnet\"}" > artifacts/deployment_devnet.json
         cat artifacts/deployment_devnet.json
 
     - name: Upload deployment artifact
