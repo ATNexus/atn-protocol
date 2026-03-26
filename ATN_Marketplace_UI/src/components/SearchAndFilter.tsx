@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Filter, Star, TrendingUp, Shield, Zap } from 'lucide-react';
 
+interface SearchAndFilterProps {
+  onSearch: (query: string) => void;
+  onFilter: (filter: { category: string; priceRange: number[] }) => void;
+}
+
 // 搜索和过滤组件
-export function SearchAndFilter({ onSearch, onFilter }) {
+export function SearchAndFilter({ onSearch, onFilter }: SearchAndFilterProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [priceRange, setPriceRange] = useState([0, 1]);

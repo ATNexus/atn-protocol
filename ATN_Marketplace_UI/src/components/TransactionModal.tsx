@@ -5,8 +5,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Wallet, ArrowRight, Shield, Clock } from 'lucide-react';
 
+interface TransactionModalProps {
+  agent: any;
+  isOpen: boolean;
+  onClose: (open: boolean) => void;
+  onConfirm: (data: any) => void;
+}
+
 // 交易模态框
-export function TransactionModal({ agent, isOpen, onClose, onConfirm }) {
+export function TransactionModal({ agent, isOpen, onClose, onConfirm }: TransactionModalProps) {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     origin: '',
