@@ -1,43 +1,19 @@
-.DS_Store
-node_modules/
-dist/
-build/
-*.log
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Solana
-.anchor
+# Build artifacts
 target/
-**/*.rs.bk
-Cargo.lock
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-*.egg-info/
-dist/
-build/
+ATN_Marketplace_UI/.next/
+ATN_Marketplace_UI/out/
+ATN_Marketplace_UI/node_modules/
+node_modules/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
-*.swo
-*~
 
 # OS
+.DS_Store
 Thumbs.db
 
-# 部署相关 (保留配置，忽略生成的)
-deployment_*.json
-!deployment_template.json
-Cargo.lock
+# Env
+.env
+.env.local
