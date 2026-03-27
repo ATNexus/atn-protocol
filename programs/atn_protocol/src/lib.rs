@@ -1,26 +1,26 @@
 use anchor_lang::prelude::*;
 
-// ATN Protocol - 简化版智能合约
-// 用于MVP演示
+// ATN Protocol - AgentTrust Nexus Smart Contract
+// Solana Devnet MVP
 
-declare_id!("ATNProtocol1111111111111111111111111111111");
+declare_id!("6azcDVHXEm8ejGYWPfu7QLRQiXktJvnBBAtnp7qbEqzv");
 
 #[program]
 pub mod atn_protocol {
     use super::*;
 
-    // 初始化协议
+    // Initialize protocol
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let protocol = &mut ctx.accounts.protocol;
         protocol.authority = ctx.accounts.authority.key();
         protocol.total_tasks = 0;
         protocol.total_volume = 0;
-        
+
         msg!("ATN Protocol initialized");
         Ok(())
     }
 
-    // 创建任务
+    // Create task
     pub fn create_task(
         ctx: Context<CreateTask>,
         task_id: String,
@@ -28,33 +28,33 @@ pub mod atn_protocol {
     ) -> Result<()> {
         let task = &mut ctx.accounts.task;
         let protocol = &mut ctx.accounts.protocol;
-        
+
         task.task_id = task_id;
         task.buyer = ctx.accounts.buyer.key();
         task.seller = ctx.accounts.seller.key();
         task.amount = amount;
         task.status = TaskStatus::Created;
         task.created_at = Clock::get()?.unix_timestamp;
-        
+
         protocol.total_tasks += 1;
         protocol.total_volume += amount;
-        
+
         msg!("Task created: {}", task.task_id);
         Ok(())
     }
 
-    // 锁定资金
+    // Lock funds in escrow
     pub fn lock_funds(ctx: Context<LockFunds>) -> Result<()> {
         let task = &mut ctx.accounts.task;
-        
+
         require!(
             task.status == TaskStatus::Created,
-            ErrorCode::InvalidTaskStatus
+            ATNError::InvalidTaskStatus
         );
-        
+
         task.status = TaskStatus::Locked;
-        
-        // 转账到托管账户
+
+        // Transfer to escrow account
         let cpi_accounts = anchor_lang::system_program::Transfer {
             from: ctx.accounts.buyer.to_account_info(),
             to: ctx.accounts.escrow.to_account_info(),
@@ -64,58 +64,58 @@ pub mod atn_protocol {
             cpi_accounts,
         );
         anchor_lang::system_program::transfer(cpi_ctx, task.amount)?;
-        
+
         msg!("Funds locked: {} lamports", task.amount);
         Ok(())
     }
 
-    // 完成任务
+    // Complete task and release funds
     pub fn complete_task(ctx: Context<CompleteTask>) -> Result<()> {
         let task = &mut ctx.accounts.task;
-        
+
         require!(
             task.status == TaskStatus::Locked,
-            ErrorCode::InvalidTaskStatus
+            ATNError::InvalidTaskStatus
         );
-        
+
         task.status = TaskStatus::Completed;
-        
-        // 释放资金给卖方
+
+        // Release funds to seller
         **ctx.accounts.escrow.to_account_info().try_borrow_mut_lamports()? -= task.amount;
         **ctx.accounts.seller.to_account_info().try_borrow_mut_lamports()? += task.amount;
-        
+
         msg!("Task completed, funds released");
         Ok(())
     }
 
-    // 退款
+    // Refund buyer
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
         let task = &mut ctx.accounts.task;
         let clock = Clock::get()?;
-        
+
         require!(
             task.status == TaskStatus::Locked,
-            ErrorCode::InvalidTaskStatus
+            ATNError::InvalidTaskStatus
         );
-        
-        // 检查超时 (简化版，实际应使用更复杂的逻辑)
+
+        // Check timeout (simplified)
         require!(
             clock.unix_timestamp > task.created_at + 3600,
-            ErrorCode::TimeoutNotReached
+            ATNError::TimeoutNotReached
         );
-        
+
         task.status = TaskStatus::Refunded;
-        
-        // 退款给买方
+
+        // Refund to buyer
         **ctx.accounts.escrow.to_account_info().try_borrow_mut_lamports()? -= task.amount;
         **ctx.accounts.buyer.to_account_info().try_borrow_mut_lamports()? += task.amount;
-        
+
         msg!("Refund processed");
         Ok(())
     }
 }
 
-// 账户结构
+// Account structures
 #[account]
 pub struct Protocol {
     pub authority: Pubkey,
@@ -141,7 +141,7 @@ pub enum TaskStatus {
     Refunded,
 }
 
-// 指令上下文
+// Instruction contexts
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(init, payer = authority, space = 8 + 32 + 8 + 8)]
@@ -198,9 +198,9 @@ pub struct Refund<'info> {
     pub escrow: AccountInfo<'info>,
 }
 
-// 错误码
+// Error codes
 #[error_code]
-pub enum ErrorCode {
+pub enum ATNError {
     #[msg("Invalid task status")]
     InvalidTaskStatus,
     #[msg("Timeout not reached")]

@@ -50,11 +50,15 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-    - name: Verify frontend structure
+    - name: Install dependencies
       run: |
-        ls -la ATN_Marketplace_UI/src/components/
-        ls -la ATN_Marketplace_UI/src/app/
-        echo "Frontend structure verified"
+        cd ATN_Marketplace_UI
+        npm install
+    - name: Build frontend
+      run: |
+        cd ATN_Marketplace_UI
+        npm run build
+        echo "Frontend build successful"
 
   security-scan:
     runs-on: ubuntu-latest
@@ -85,7 +89,7 @@ jobs:
         PYEOF
 
   deploy-devnet:
-    needs: [lint, test]
+    needs: [lint, test, build-frontend, security-scan]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
@@ -95,48 +99,121 @@ jobs:
       run: |
         SOLANA_VERSION="1.18.26"
         echo "Installing Solana CLI v${SOLANA_VERSION}..."
-        if curl -sSfL --retry 3 --retry-delay 5 "https://release.anza.xyz/v${SOLANA_VERSION}/install" -o /tmp/solana-install.sh 2>/dev/null; then
-          sh /tmp/solana-install.sh
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-          echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
-          echo "Solana CLI installed via anza.xyz"
-        elif curl -sSfL --retry 3 --retry-delay 5 "https://release.solana.com/v${SOLANA_VERSION}/install" -o /tmp/solana-install.sh 2>/dev/null; then
-          sh /tmp/solana-install.sh
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-          echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
-          echo "Solana CLI installed via solana.com"
-        else
+        for URL in "https://release.anza.xyz/v${SOLANA_VERSION}/install" "https://release.solana.com/v${SOLANA_VERSION}/install"; do
+          if curl -sSfL --retry 3 --retry-delay 5 "$URL" -o /tmp/solana-install.sh 2>/dev/null; then
+            sh /tmp/solana-install.sh
+            echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+            export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+            solana --version
+            echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
+            break
+          fi
+        done
+        if [ "${SOLANA_INSTALLED}" != "true" ]; then
           echo "SOLANA_INSTALLED=false" >> $GITHUB_ENV
-          echo "Solana install failed - using simulation mode"
+          echo "WARNING: Solana CLI installation failed"
         fi
 
-    - name: Configure Wallet and Deploy
+    - name: Configure Solana for Devnet
+      if: env.SOLANA_INSTALLED == 'true'
       run: |
-        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-        if command -v solana &> /dev/null && [ "$SOLANA_INSTALLED" = "true" ]; then
-          solana config set --url devnet
-          mkdir -p ~/.config/solana
-          echo '${{ secrets.SOLANA_WALLET }}' > ~/.config/solana/id.json
-          WALLET_ADDR=$(solana-keygen pubkey ~/.config/solana/id.json 2>/dev/null || echo "unknown")
-          echo "Wallet address: $WALLET_ADDR"
-          echo "Requesting airdrop..."
-          solana airdrop 2 --url devnet 2>/dev/null && sleep 5 || echo "Airdrop skipped"
-          BALANCE=$(solana balance --url devnet 2>/dev/null || echo "0 SOL")
-          echo "Balance: $BALANCE"
-          PROGRAM_ID="ATN_DEVNET_${WALLET_ADDR:0:16}_$(date +%s | sha256sum | head -c 8)"
-          echo "Program ID (wallet-derived): $PROGRAM_ID"
+        solana config set --url devnet
+        mkdir -p ~/.config/solana
+        echo '${{ secrets.SOLANA_WALLET }}' > ~/.config/solana/id.json
+        WALLET_ADDR=$(solana-keygen pubkey ~/.config/solana/id.json)
+        echo "Deployer wallet: $WALLET_ADDR"
+        echo "WALLET_ADDR=$WALLET_ADDR" >> $GITHUB_ENV
+
+    - name: Request Devnet Airdrop
+      if: env.SOLANA_INSTALLED == 'true'
+      run: |
+        echo "Requesting SOL airdrop on devnet..."
+        AIRDROP_SUCCESS=false
+        for i in 1 2 3 4 5; do
+          echo "Attempt $i..."
+          if solana airdrop 2 --url devnet 2>&1; then
+            echo "Airdrop attempt $i successful"
+            AIRDROP_SUCCESS=true
+            sleep 20
+          else
+            echo "Airdrop attempt $i failed, waiting 30s..."
+            sleep 30
+          fi
+        done
+        BALANCE=$(solana balance --url devnet 2>/dev/null || echo "0 SOL")
+        echo "Current balance: $BALANCE"
+        echo "BALANCE=$BALANCE" >> $GITHUB_ENV
+        echo "AIRDROP_SUCCESS=$AIRDROP_SUCCESS" >> $GITHUB_ENV
+
+    - name: Build Solana Program
+      if: env.SOLANA_INSTALLED == 'true'
+      run: |
+        echo "Building ATN Protocol Solana program..."
+        rm -f Cargo.lock
+        cargo generate-lockfile
+        sed -i 's/^version = 4$/version = 3/' Cargo.lock || true
+        cargo-build-sbf --manifest-path programs/atn_protocol/Cargo.toml 2>&1 && {
+          echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
+          echo "Contract built successfully!"
+          ls -la target/deploy/atn_protocol.so
+        } || {
+          echo "BUILD_SUCCESS=false" >> $GITHUB_ENV
+          echo "Contract build failed"
+        }
+
+    - name: Deploy to Devnet
+      if: env.SOLANA_INSTALLED == 'true' && env.BUILD_SUCCESS == 'true' && env.AIRDROP_SUCCESS == 'true'
+      run: |
+        echo "Deploying ATN Protocol to Solana Devnet..."
+        cp ~/.config/solana/id.json /tmp/program-keypair-backup.json
+        DEPLOY_OUTPUT=$(solana program deploy \
+          target/deploy/atn_protocol.so \
+          --url devnet \
+          --keypair ~/.config/solana/id.json \
+          --program-id target/deploy/atn_protocol-keypair.json \
+          2>&1) || true
+        echo "$DEPLOY_OUTPUT"
+        PROGRAM_ID=$(echo "$DEPLOY_OUTPUT" | grep -oP 'Program Id: \K\S+')
+        if [ -n "$PROGRAM_ID" ]; then
+          echo "DEPLOYED=true" >> $GITHUB_ENV
+          echo "PROGRAM_ID=$PROGRAM_ID" >> $GITHUB_ENV
+          echo "Successfully deployed! Program ID: $PROGRAM_ID"
+          echo "Explorer: https://explorer.solana.com/address/$PROGRAM_ID?cluster=devnet"
         else
-          PROGRAM_ID="ATN_SIMULATED_$(date +%s | sha256sum | head -c 32)"
-          echo "Simulation mode - Program ID: $PROGRAM_ID"
+          echo "DEPLOYED=false" >> $GITHUB_ENV
+          PROGRAM_ID="6azcDVHXEm8ejGYWPfu7QLRQiXktJvnBBAtnp7qbEqzv"
+          echo "PROGRAM_ID=$PROGRAM_ID" >> $GITHUB_ENV
+          echo "Deploy failed - using declared Program ID: $PROGRAM_ID"
         fi
+
+    - name: Fallback - Set Program ID
+      if: env.PROGRAM_ID == ''
+      run: |
+        PROGRAM_ID="6azcDVHXEm8ejGYWPfu7QLRQiXktJvnBBAtnp7qbEqzv"
         echo "PROGRAM_ID=$PROGRAM_ID" >> $GITHUB_ENV
-        echo "Final Program ID: $PROGRAM_ID"
+        echo "DEPLOYED=pending" >> $GITHUB_ENV
+        echo "Using declared Program ID: $PROGRAM_ID"
 
     - name: Save deployment info
       run: |
         mkdir -p artifacts
         DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        echo "{\"network\":\"devnet\",\"program_id\":\"${PROGRAM_ID}\",\"deployed_at\":\"${DEPLOYED_AT}\",\"commit\":\"${{ github.sha }}\",\"deployed_by\":\"GitHub Actions\",\"explorer_url\":\"https://explorer.solana.com/address/${PROGRAM_ID}?cluster=devnet\"}" > artifacts/deployment_devnet.json
+        cat > artifacts/deployment_devnet.json << JSONEOF
+        {
+          "network": "devnet",
+          "program_id": "${PROGRAM_ID}",
+          "deployed_at": "${DEPLOYED_AT}",
+          "commit": "${{ github.sha }}",
+          "deployed_by": "GitHub Actions",
+          "deploy_status": "${DEPLOYED}",
+          "build_success": "${BUILD_SUCCESS}",
+          "airdrop_success": "${AIRDROP_SUCCESS}",
+          "wallet": "${WALLET_ADDR}",
+          "balance": "${BALANCE}",
+          "explorer_url": "https://explorer.solana.com/address/${PROGRAM_ID}?cluster=devnet"
+        }
+        JSONEOF
+        echo "=== Deployment Info ==="
         cat artifacts/deployment_devnet.json
 
     - name: Upload deployment artifact

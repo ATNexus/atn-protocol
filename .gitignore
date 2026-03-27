@@ -40,3 +40,4 @@ Thumbs.db
 # 部署相关 (保留配置，忽略生成的)
 deployment_*.json
 !deployment_template.json
+Cargo.lock
