@@ -152,9 +152,8 @@ jobs:
       if: env.SOLANA_INSTALLED == 'true'
       run: |
         echo "Building ATN Protocol Solana program..."
-        rm -f Cargo.lock
-        cargo generate-lockfile
-        sed -i 's/^version = 4$/version = 3/' Cargo.lock || true
+        echo "Using committed Cargo.lock (version 3, compatible with SBF toolchain)..."
+        head -3 Cargo.lock
         cargo-build-sbf --manifest-path programs/atn_protocol/Cargo.toml 2>&1 && {
           echo "BUILD_SUCCESS=true" >> $GITHUB_ENV
           echo "Contract built successfully!"
