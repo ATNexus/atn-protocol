@@ -99,17 +99,20 @@ jobs:
       run: |
         SOLANA_VERSION="1.18.26"
         echo "Installing Solana CLI v${SOLANA_VERSION}..."
+        INSTALL_OK=false
         for URL in "https://release.anza.xyz/v${SOLANA_VERSION}/install" "https://release.solana.com/v${SOLANA_VERSION}/install"; do
           if curl -sSfL --retry 3 --retry-delay 5 "$URL" -o /tmp/solana-install.sh 2>/dev/null; then
             sh /tmp/solana-install.sh
             echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
             export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-            solana --version
-            echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
+            solana --version && INSTALL_OK=true
             break
           fi
         done
-        if [ "${SOLANA_INSTALLED}" != "true" ]; then
+        if [ "$INSTALL_OK" = "true" ]; then
+          echo "SOLANA_INSTALLED=true" >> $GITHUB_ENV
+          echo "Solana CLI installed successfully"
+        else
           echo "SOLANA_INSTALLED=false" >> $GITHUB_ENV
           echo "WARNING: Solana CLI installation failed"
         fi
